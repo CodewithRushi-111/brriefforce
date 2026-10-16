@@ -59,6 +59,32 @@ const withProvenance = (sourceRetrieved: boolean | undefined): Claim => ({
   evidence: [{ ...claim.evidence[0], sourceRetrieved }],
 });
 
+const CITED = "Official data shows the figure was 12 billion dollars.";
+const withSourceExcerpt = (): Claim => ({
+  ...claim,
+  evidence: [{ ...claim.evidence[0], sourceExcerpt: CITED }],
+});
+
+describe("MOCKED — ResultsTable API source excerpt vs AI summary", () => {
+  it("renders the API source excerpt labeled and quoted, distinct from the unquoted summary", () => {
+    const html = render([withSourceExcerpt()]);
+    expect(html).toContain("Source excerpt");
+    // The verbatim API excerpt IS quoted (it is a real quote).
+    expect(html).toContain(`“${CITED}”`);
+    // The AI summary is still shown and still NOT wrapped in quotation marks.
+    expect(html).toContain("Evidence summary");
+    expect(html).toContain(EXCERPT);
+    expect(html).not.toContain(`“${EXCERPT}”`);
+  });
+
+  it("omits the source-excerpt line when no citation text is present", () => {
+    const html = render([claim]);
+    expect(html).not.toContain("Source excerpt");
+    // With no API excerpt, nothing is quoted at all.
+    expect(html).not.toContain("“");
+  });
+});
+
 describe("MOCKED — ResultsTable source-attribution provenance", () => {
   it("marks an unretrieved source as unverified (and never as 'verified')", () => {
     const html = render([withProvenance(false)]);

@@ -52,6 +52,16 @@ export interface Evidence {
    * (undefined) on claims produced before this check existed.
    */
   sourceRetrieved?: boolean;
+  /**
+   * Verbatim quoted text that Anthropic's web_search integration attributed to
+   * this source (a `web_search_result_location` citation's `cited_text`),
+   * associated to this evidence by normalized-URL match against the real API
+   * response — NOT taken from the model's JSON. It is a SHORT cited excerpt
+   * (possibly truncated), not the full page, and its presence does NOT mean the
+   * claim has been semantically verified. Omitted when no citation text could be
+   * reliably associated. Absent (undefined) on older claims.
+   */
+  sourceExcerpt?: string;
 }
 
 export interface Claim {

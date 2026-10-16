@@ -12,6 +12,7 @@ const HEADERS = [
   "Verdict",
   "Reasoning",
   "Evidence Summary",
+  "Source Excerpt",
   "Source Title",
   "Source URL",
   "Source Retrieved",
@@ -38,7 +39,7 @@ export function claimsToCsv(claims: Claim[]): string {
 
   for (const claim of claims) {
     if (claim.evidence.length === 0) {
-      rows.push([claim.claim, claim.verdict, claim.reasoning, "", "", "", "", ""]);
+      rows.push([claim.claim, claim.verdict, claim.reasoning, "", "", "", "", "", ""]);
       continue;
     }
     for (const ev of claim.evidence) {
@@ -47,6 +48,7 @@ export function claimsToCsv(claims: Claim[]): string {
         claim.verdict,
         claim.reasoning,
         ev.excerpt,
+        ev.sourceExcerpt ?? "",
         ev.sourceTitle,
         ev.sourceUrl,
         retrievedCell(ev.sourceRetrieved),

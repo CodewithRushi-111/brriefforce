@@ -140,6 +140,17 @@ export default function ResultsTable({
                               {ev.excerpt}
                             </p>
                           )}
+                          {ev.sourceExcerpt && (
+                            <p
+                              className="mt-1 text-zinc-600 dark:text-zinc-400"
+                              title="A verbatim excerpt the web-search integration attributed to this source. It is a short quoted span, not the full page, and does not by itself prove the source supports the claim."
+                            >
+                              <span className="font-medium text-zinc-500 dark:text-zinc-400">
+                                Source excerpt (verbatim, may be shortened):{" "}
+                              </span>
+                              <span className="italic">&ldquo;{ev.sourceExcerpt}&rdquo;</span>
+                            </p>
+                          )}
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-zinc-500 dark:text-zinc-400">
                             {ev.sourceUrl ? (
                               <a

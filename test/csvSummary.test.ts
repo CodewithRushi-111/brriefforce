@@ -24,6 +24,24 @@ describe("MOCKED — claimsToCsv", () => {
     expect(header).not.toContain("Evidence Excerpt");
   });
 
+  it("exports the real API source excerpt in its own column, separate from the summary", () => {
+    const csv = claimsToCsv([
+      claim({
+        evidence: [
+          { excerpt: "AI summary one", sourceExcerpt: "Verbatim cited text", sourceUrl: "https://a.com", sourceTitle: "A", publicationDate: "" },
+          { excerpt: "AI summary two", sourceUrl: "https://b.com", sourceTitle: "B", publicationDate: "" }, // no API excerpt
+        ],
+      }),
+    ]);
+    const rows = csv.split("\r\n");
+    expect(rows[0]).toContain("Source Excerpt");
+    // Source Excerpt is its own column (index 4), distinct from Evidence Summary (index 3).
+    expect(rows[1].split(",")[4]).toBe("Verbatim cited text");
+    expect(rows[1].split(",")[3]).toBe("AI summary one");
+    // Missing API excerpt → blank, never copied from the summary.
+    expect(rows[2].split(",")[4]).toBe("");
+  });
+
   it("exports source-attribution provenance honestly (yes/no/blank)", () => {
     const csv = claimsToCsv([
       claim({

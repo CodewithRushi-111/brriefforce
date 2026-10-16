@@ -45,6 +45,28 @@ describe("MOCKED — storage round-trip and validation", () => {
     expect(loadStoredResults()).toEqual(withFlag);
   });
 
+  it("round-trips the API source excerpt alongside the provenance flag", () => {
+    const withExcerpt: Claim[] = [
+      {
+        claim: "c",
+        verdict: "Supported",
+        reasoning: "r",
+        evidence: [
+          {
+            excerpt: "AI summary",
+            sourceUrl: "https://a.com",
+            sourceTitle: "A",
+            publicationDate: "2024-01-01",
+            sourceRetrieved: true,
+            sourceExcerpt: "Verbatim cited text",
+          },
+        ],
+      },
+    ];
+    saveStoredResults(withExcerpt);
+    expect(loadStoredResults()).toEqual(withExcerpt);
+  });
+
   it("returns null and clears a payload with an invalid verdict", () => {
     localStorage.setItem(
       KEY,

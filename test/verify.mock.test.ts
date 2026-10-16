@@ -16,8 +16,9 @@ type FakeEvent =
   | { type: "content_block_stop"; index: number };
 interface FakeMessage {
   stop_reason: string;
-  // `content` on a block is used by web_search_tool_result blocks (the results list).
-  content: { type: string; text?: string; content?: unknown }[];
+  // `content` on a block is used by web_search_tool_result blocks (the results list);
+  // `citations` on a text block carries web_search_result_location citation objects.
+  content: { type: string; text?: string; content?: unknown; citations?: unknown }[];
 }
 interface FakeTurn {
   events: FakeEvent[];
@@ -77,6 +78,34 @@ const finalWithSearch = (urls: string[], claims: unknown): FakeMessage => ({
 });
 const provenanceWarned = (warnings: string[] | undefined) =>
   (warnings ?? []).some((w) => /provenance could not be confirmed/i.test(w));
+
+// A real web_search_result_location citation object, as the API attaches it to text blocks.
+const citationObj = (url: string, citedText: string) => ({
+  type: "web_search_result_location",
+  url,
+  title: "T",
+  cited_text: citedText,
+  encrypted_index: "idx",
+});
+// Final message carrying search results AND a text block with real citations + the JSON answer.
+const finalWithCitations = (args: {
+  searchUrls?: string[];
+  citations?: Array<{ url: string; cited: string }>;
+  claims: unknown;
+}): FakeMessage => ({
+  stop_reason: "end_turn",
+  content: [
+    webSearchResult(args.searchUrls ?? []),
+    {
+      type: "text",
+      text: JSON.stringify({ claims: args.claims }),
+      citations: (args.citations ?? []).map((c) => citationObj(c.url, c.cited)),
+    },
+  ],
+});
+const oneEvidenceClaim = (sourceUrl: string, excerpt = "An AI paraphrase.") => [
+  { claim: "c", verdict: "Supported", reasoning: "r", evidence: [{ excerpt, sourceUrl, sourceTitle: "T", publicationDate: "" }] },
+];
 
 beforeEach(() => {
   h.turns.length = 0;
@@ -294,5 +323,95 @@ describe("MOCKED — source-attribution grounding (sourceRetrieved)", () => {
     expect(claim.verdict).toBe("Insufficient Evidence");
     expect(claim.evidence).toEqual([]);
     expect(provenanceWarned(claim.warnings)).toBe(false);
+  });
+});
+
+describe("MOCKED — real API source excerpt (sourceExcerpt from web_search citations)", () => {
+  it("extracts cited_text and associates it to the matching evidence URL", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://a.com/x"],
+        citations: [{ url: "https://a.com/x", cited: "The market reached $12B in 2024." }],
+        claims: oneEvidenceClaim("https://a.com/x"),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceExcerpt).toBe("The market reached $12B in 2024.");
+    expect(claim.evidence[0].sourceRetrieved).toBe(true);
+    // The AI summary is preserved and kept distinct from the verbatim excerpt.
+    expect(claim.evidence[0].excerpt).toBe("An AI paraphrase.");
+  });
+
+  it("omits the excerpt when the citation URL does not match the evidence URL", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://a.com/x"],
+        citations: [{ url: "https://a.com/x", cited: "Cited text for a different page." }],
+        claims: oneEvidenceClaim("https://b.com/y"),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceExcerpt).toBeUndefined();
+  });
+
+  it("omits the excerpt when no citation text is present (never manufactured)", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://a.com/x"],
+        citations: [],
+        claims: oneEvidenceClaim("https://a.com/x"),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceExcerpt).toBeUndefined();
+    expect(claim.evidence[0].sourceRetrieved).toBe(true); // provenance flag unaffected
+  });
+
+  it("uses the API cited_text, NOT a fabricated excerpt in the model's JSON", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://a.com/x"],
+        citations: [{ url: "https://a.com/x", cited: "Genuine text the API extracted." }],
+        claims: oneEvidenceClaim("https://a.com/x", "A FABRICATED model paraphrase."),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceExcerpt).toBe("Genuine text the API extracted.");
+    // The model's JSON text is never promoted to the verbatim excerpt.
+    expect(claim.evidence[0].sourceExcerpt).not.toBe(claim.evidence[0].excerpt);
+    expect(claim.evidence[0].excerpt).toBe("A FABRICATED model paraphrase.");
+  });
+
+  it("truncates a long excerpt to a short cited span with an ellipsis", async () => {
+    const long = "x".repeat(600);
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://a.com/x"],
+        citations: [{ url: "https://a.com/x", cited: long }],
+        claims: oneEvidenceClaim("https://a.com/x"),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    const excerpt = claim.evidence[0].sourceExcerpt!;
+    expect(excerpt.endsWith("…")).toBe(true);
+    expect(excerpt.length).toBe(501); // 500 chars + ellipsis
+  });
+
+  it("associates via normalized URL (protocol / www / trailing slash differences)", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithCitations({
+        searchUrls: ["https://www.a.com/x/"],
+        citations: [{ url: "https://www.a.com/x/", cited: "Matched after normalization." }],
+        claims: oneEvidenceClaim("http://a.com/x"),
+      }),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceExcerpt).toBe("Matched after normalization.");
   });
 });

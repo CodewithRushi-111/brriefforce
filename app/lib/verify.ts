@@ -95,6 +95,40 @@ function collectRetrievedUrls(content: ReadonlyArray<{ type: string }>): string[
   return urls;
 }
 
+// A web_search citation excerpt can be long; cap what we persist/show so a short
+// cited span is presented as an excerpt, never as the complete page content.
+const MAX_SOURCE_EXCERPT_CHARS = 500;
+
+/**
+ * Collect the REAL per-source citation text from a message's content. Anthropic
+ * attaches `web_search_result_location` citations (with `url` + `cited_text`) to
+ * the text blocks it writes. `cited_text` is verbatim text the API extracted from
+ * the cited page — authoritative, unlike anything in the model's JSON answer.
+ * Returns `{ url, citedText }` pairs; other citation/location shapes are ignored.
+ */
+function collectCitations(content: ReadonlyArray<{ type: string }>): Array<{ url: string; citedText: string }> {
+  const out: Array<{ url: string; citedText: string }> = [];
+  for (const block of content) {
+    if (block.type !== "text") continue;
+    const cites = (block as { citations?: unknown }).citations;
+    if (!Array.isArray(cites)) continue;
+    for (const c of cites) {
+      const cite = c as { type?: unknown; url?: unknown; cited_text?: unknown } | null;
+      if (cite?.type !== "web_search_result_location") continue;
+      const url = typeof cite.url === "string" ? cite.url : "";
+      const citedText = typeof cite.cited_text === "string" ? cite.cited_text : "";
+      if (url && citedText) out.push({ url, citedText });
+    }
+  }
+  return out;
+}
+
+/** Present a citation as a short excerpt: trimmed and length-capped with an ellipsis. */
+function truncateExcerpt(text: string): string {
+  const t = text.trim();
+  return t.length > MAX_SOURCE_EXCERPT_CHARS ? `${t.slice(0, MAX_SOURCE_EXCERPT_CHARS)}…` : t;
+}
+
 /**
  * Normalize a URL for attribution matching: lowercase host, drop a leading
  * "www.", drop trailing slashes, and ignore protocol/query/fragment. Returns
@@ -112,12 +146,20 @@ function normalizeUrlForMatch(raw: string): string | null {
 }
 
 /**
- * Tag each evidence item with `sourceRetrieved` (attribution only): true iff its
- * sourceUrl matched a URL web_search actually returned for this verification.
- * Non-mutating; never changes a verdict. An unmatched URL is a provenance flag,
- * NOT proof the claim is false or the summary inaccurate.
+ * Tag each evidence item with provenance derived ONLY from the real API response:
+ *  - `sourceRetrieved` (unchanged meaning): true iff its sourceUrl matched a URL
+ *    web_search actually returned for this verification.
+ *  - `sourceExcerpt`: the API's verbatim citation `cited_text` for that URL, when
+ *    a `web_search_result_location` citation can be associated by normalized-URL
+ *    match. Omitted when no citation text is available — never manufactured, and
+ *    never taken from the model's JSON excerpt.
+ * Non-mutating; never changes a verdict.
  */
-function groundEvidence(claims: Claim[], retrievedUrls: Set<string>): Claim[] {
+function groundEvidence(
+  claims: Claim[],
+  retrievedUrls: Set<string>,
+  citationByUrl: Map<string, string>,
+): Claim[] {
   const retrievedKeys = new Set<string>();
   for (const u of retrievedUrls) {
     const key = normalizeUrlForMatch(u);
@@ -127,7 +169,10 @@ function groundEvidence(claims: Claim[], retrievedUrls: Set<string>): Claim[] {
     ...claim,
     evidence: claim.evidence.map((e) => {
       const key = e.sourceUrl ? normalizeUrlForMatch(e.sourceUrl) : null;
-      return { ...e, sourceRetrieved: key !== null && retrievedKeys.has(key) };
+      const sourceRetrieved = key !== null && retrievedKeys.has(key);
+      const cited = key !== null ? citationByUrl.get(key) : undefined;
+      const tagged = { ...e, sourceRetrieved };
+      return cited ? { ...tagged, sourceExcerpt: truncateExcerpt(cited) } : tagged;
     }),
   }));
 }
@@ -192,6 +237,8 @@ async function runVerification(
   // URLs web_search actually returned across every (possibly paused) turn of
   // this verification — the ground truth we check cited sources against.
   const retrievedUrls = new Set<string>();
+  // Real API citation text keyed by normalized source URL (first non-empty wins).
+  const citationByUrl = new Map<string, string>();
   onProgress({ type: "status", message: "Reading the memo and planning searches…" });
 
   for (let i = 0; i < MAX_CONTINUATIONS; i++) {
@@ -249,6 +296,10 @@ async function runVerification(
 
     const message = await stream.finalMessage();
     for (const url of collectRetrievedUrls(message.content)) retrievedUrls.add(url);
+    for (const { url, citedText } of collectCitations(message.content)) {
+      const key = normalizeUrlForMatch(url);
+      if (key && !citationByUrl.has(key)) citationByUrl.set(key, citedText);
+    }
 
     // Server tool loop hit its cap this turn — append and resume.
     if (message.stop_reason === "pause_turn") {
@@ -266,9 +317,10 @@ async function runVerification(
   const result = parseResult(finalText);
 
   // Attribution grounding: tag each cited source with whether its URL was among
-  // the ones web_search actually returned for this verification. Provenance only
-  // — it never changes a verdict and never implies the summary is accurate.
-  const grounded = groundEvidence(result.claims, retrievedUrls);
+  // the ones web_search actually returned for this verification, and attach any
+  // real API citation text for that URL. Provenance only — it never changes a
+  // verdict and never implies the summary is accurate.
+  const grounded = groundEvidence(result.claims, retrievedUrls, citationByUrl);
 
   // Best-effort source validation. This annotates evidence with URL format
   // validity + reachability and adds structural quality notes. It NEVER changes
