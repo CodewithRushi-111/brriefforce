@@ -1,0 +1,74 @@
+// MOCKED (deterministic) tests for CSV export and verdict tallying.
+import { describe, it, expect } from "vitest";
+import { claimsToCsv } from "@/app/lib/csv";
+import { countByVerdict } from "@/app/lib/summary";
+import type { Claim } from "@/app/lib/types";
+
+const claim = (over: Partial<Claim>): Claim => ({
+  claim: "c",
+  verdict: "Supported",
+  reasoning: "r",
+  evidence: [],
+  ...over,
+});
+
+describe("MOCKED — claimsToCsv", () => {
+  it("emits a header row with Source URL column", () => {
+    const csv = claimsToCsv([]);
+    expect(csv.split("\r\n")[0]).toContain("Source URL");
+  });
+
+  it("labels the evidence column as a summary, not a verbatim excerpt", () => {
+    const header = claimsToCsv([]).split("\r\n")[0];
+    expect(header).toContain("Evidence Summary");
+    expect(header).not.toContain("Evidence Excerpt");
+  });
+
+  it("writes one row per evidence item and preserves the source URL", () => {
+    const csv = claimsToCsv([
+      claim({
+        evidence: [
+          { excerpt: "a", sourceUrl: "https://one.com/x", sourceTitle: "One", publicationDate: "2024-01-01" },
+          { excerpt: "b", sourceUrl: "https://two.com/y", sourceTitle: "Two", publicationDate: "2024-02-02" },
+        ],
+      }),
+    ]);
+    const rows = csv.split("\r\n");
+    expect(rows).toHaveLength(3); // header + 2 evidence rows
+    expect(csv).toContain("https://one.com/x");
+    expect(csv).toContain("https://two.com/y");
+  });
+
+  it("still emits one row for a claim with no evidence", () => {
+    const csv = claimsToCsv([claim({ claim: "lonely", evidence: [] })]);
+    expect(csv.split("\r\n")).toHaveLength(2);
+    expect(csv).toContain("lonely");
+  });
+
+  it("escapes commas, quotes, and newlines per RFC 4180", () => {
+    const csv = claimsToCsv([
+      claim({ claim: 'has "quote", comma\nand newline', reasoning: "r" }),
+    ]);
+    expect(csv).toContain('"has ""quote"", comma\nand newline"');
+  });
+});
+
+describe("MOCKED — countByVerdict", () => {
+  it("counts every verdict category", () => {
+    const counts = countByVerdict([
+      claim({ verdict: "Supported" }),
+      claim({ verdict: "Supported" }),
+      claim({ verdict: "Contradicted" }),
+      claim({ verdict: "Mixed Evidence" }),
+      claim({ verdict: "Insufficient Evidence" }),
+      claim({ verdict: "Potentially Outdated" }),
+    ]);
+    expect(counts).toEqual({
+      Supported: 2,
+      Contradicted: 1,
+      "Mixed Evidence": 1,
+      "Insufficient Evidence": 1,
+      "Potentially Outdated": 1,
+    });
+  });
+});
