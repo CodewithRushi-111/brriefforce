@@ -23,6 +23,21 @@ export function assessClaim(claim: Claim): string[] {
     );
   }
 
+  // A definite verdict whose usable sources were ALL absent from this check's
+  // web-search results has unconfirmed provenance. Attribution only — this is
+  // NOT proof the claim is false, just that the cited URL(s) could not be tied
+  // to a retrieved source. `undefined` (older/un-grounded claims) is skipped so
+  // we never warn about data we didn't check.
+  if (
+    (claim.verdict === "Supported" || claim.verdict === "Contradicted") &&
+    usable.length > 0 &&
+    usable.every((e) => e.sourceRetrieved === false)
+  ) {
+    warnings.push(
+      `A "${claim.verdict}" verdict cites ${usable.length === 1 ? "a source" : "sources"} that did not appear in the web-search results for this check; provenance could not be confirmed.`,
+    );
+  }
+
   // "Mixed Evidence" means materially conflicting sources — needs at least two.
   if (claim.verdict === "Mixed Evidence" && claim.evidence.length < 2) {
     warnings.push(

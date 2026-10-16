@@ -24,6 +24,27 @@ describe("MOCKED — storage round-trip and validation", () => {
     expect(loadStoredResults()).toEqual(good);
   });
 
+  it("accepts older persisted claims that lack the sourceRetrieved field", () => {
+    // `good` has no sourceRetrieved on its evidence — the pre-grounding shape.
+    saveStoredResults(good);
+    const loaded = loadStoredResults();
+    expect(loaded).not.toBeNull();
+    expect(loaded![0].evidence[0]).not.toHaveProperty("sourceRetrieved");
+  });
+
+  it("round-trips the new sourceRetrieved provenance flag", () => {
+    const withFlag: Claim[] = [
+      {
+        claim: "c",
+        verdict: "Supported",
+        reasoning: "r",
+        evidence: [{ excerpt: "e", sourceUrl: "https://a.com", sourceTitle: "A", publicationDate: "2024-01-01", sourceRetrieved: true }],
+      },
+    ];
+    saveStoredResults(withFlag);
+    expect(loadStoredResults()).toEqual(withFlag);
+  });
+
   it("returns null and clears a payload with an invalid verdict", () => {
     localStorage.setItem(
       KEY,

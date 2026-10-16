@@ -43,6 +43,15 @@ export interface Evidence {
   urlValid?: boolean;
   /** Server-side reachability of sourceUrl (distinct from format validity). */
   reachability?: Reachability;
+  /**
+   * Provenance flag (attribution only). `true` iff this evidence's sourceUrl
+   * matched a URL actually returned by web_search during THIS verification.
+   * `false` means it did not match, or provenance could not be established.
+   * This is URL-level attribution ONLY — it does NOT prove the page's content
+   * supports the claim, nor that the evidence summary is accurate. Absent
+   * (undefined) on claims produced before this check existed.
+   */
+  sourceRetrieved?: boolean;
 }
 
 export interface Claim {

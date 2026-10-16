@@ -16,7 +16,8 @@ type FakeEvent =
   | { type: "content_block_stop"; index: number };
 interface FakeMessage {
   stop_reason: string;
-  content: { type: string; text?: string }[];
+  // `content` on a block is used by web_search_tool_result blocks (the results list).
+  content: { type: string; text?: string; content?: unknown }[];
 }
 interface FakeTurn {
   events: FakeEvent[];
@@ -62,6 +63,20 @@ const extraction = (claims: string[]): FakeMessage => ({
 });
 const oneClaim = (verdict: string, claim = "c") =>
   textFinal([{ claim, verdict, reasoning: "r", evidence: [] }]);
+
+// A web_search_tool_result block as it appears in a real assistant message:
+// `content` is the list of results the tool actually returned (url/title/…).
+const webSearchResult = (urls: string[]) => ({
+  type: "web_search_tool_result",
+  content: urls.map((url) => ({ type: "web_search_result", url, title: "T", encrypted_content: "enc" })),
+});
+// A final message that carries BOTH the search results and the model's JSON answer.
+const finalWithSearch = (urls: string[], claims: unknown): FakeMessage => ({
+  stop_reason: "end_turn",
+  content: [webSearchResult(urls), { type: "text", text: JSON.stringify({ claims }) }],
+});
+const provenanceWarned = (warnings: string[] | undefined) =>
+  (warnings ?? []).some((w) => /provenance could not be confirmed/i.test(w));
 
 beforeEach(() => {
   h.turns.length = 0;
@@ -194,5 +209,90 @@ describe("MOCKED — verifyMemo orchestration (extract → concurrent verify)", 
     h.extract = extraction([]);
     const res = await verifyMemo("a memo with only opinions");
     expect(res.claims).toEqual([]);
+  });
+});
+
+describe("MOCKED — source-attribution grounding (sourceRetrieved)", () => {
+  it("marks a source that matches the web_search results as retrieved", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithSearch(
+        ["https://a.com/x"],
+        [
+          {
+            claim: "c",
+            verdict: "Supported",
+            reasoning: "r",
+            evidence: [
+              { excerpt: "A summary of what the page says.", sourceUrl: "https://a.com/x", sourceTitle: "T", publicationDate: "" },
+            ],
+          },
+        ],
+      ),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceRetrieved).toBe(true);
+    expect(provenanceWarned(claim.warnings)).toBe(false);
+  });
+
+  it("flags a fabricated / unmatched source URL and warns on a definite verdict", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithSearch(
+        ["https://a.com/x"], // the only URL actually retrieved
+        [
+          {
+            claim: "c",
+            verdict: "Supported",
+            reasoning: "r",
+            evidence: [
+              // A URL that was never in the search results.
+              { excerpt: "A summary.", sourceUrl: "https://fabricated.example.org/z", sourceTitle: "T", publicationDate: "" },
+            ],
+          },
+        ],
+      ),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.evidence[0].sourceRetrieved).toBe(false);
+    expect(provenanceWarned(claim.warnings)).toBe(true);
+    expect(claim.verdict).toBe("Supported"); // provenance never changes the verdict
+  });
+
+  it("does not attribute an AI search-coverage summary to an unrelated source", async () => {
+    const coverage = "I searched multiple databases and found broad coverage of this subject.";
+    h.turns.push({
+      events: [],
+      final: finalWithSearch(
+        ["https://realdata.gov/report"],
+        [
+          {
+            claim: "c",
+            verdict: "Supported",
+            reasoning: "r",
+            evidence: [
+              { excerpt: coverage, sourceUrl: "https://someblog.example.com/post", sourceTitle: "Blog", publicationDate: "" },
+            ],
+          },
+        ],
+      ),
+    });
+    const claim = await verifyClaim("c");
+    // The unrelated URL is not confirmed as the source of this summary.
+    expect(claim.evidence[0].sourceRetrieved).toBe(false);
+    // The summary text is preserved verbatim (nothing fabricated or rewritten).
+    expect(claim.evidence[0].excerpt).toBe(coverage);
+    expect(provenanceWarned(claim.warnings)).toBe(true);
+  });
+
+  it("insufficient evidence stays empty — no fabricated supporting evidence", async () => {
+    h.turns.push({
+      events: [],
+      final: finalWithSearch([], [{ claim: "c", verdict: "Insufficient Evidence", reasoning: "r", evidence: [] }]),
+    });
+    const claim = await verifyClaim("c");
+    expect(claim.verdict).toBe("Insufficient Evidence");
+    expect(claim.evidence).toEqual([]);
+    expect(provenanceWarned(claim.warnings)).toBe(false);
   });
 });

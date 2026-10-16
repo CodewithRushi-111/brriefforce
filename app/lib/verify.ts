@@ -32,7 +32,7 @@ Your job:
    - "Mixed Evidence": credible sources disagree, or it is partially true.
    - "Insufficient Evidence": you could not find enough reliable evidence either way.
    - "Potentially Outdated": it may have been true but newer data suggests it has changed.
-4. For each source, record a brief evidence SUMMARY — one or two sentences, in your own words, describing what that source says about the claim — plus the source URL, the source title, and the source's publication date (ISO YYYY-MM-DD, or "" if unknown). This summary is a paraphrase, NOT a verbatim quotation: do not fabricate, guess, or reconstruct the source's exact wording.
+4. For each source, record a brief evidence SUMMARY — one or two sentences, in your own words, describing what that source says about the claim — plus the source URL, the source title, and the source's publication date (ISO YYYY-MM-DD, or "" if unknown). This summary is a paraphrase, NOT a verbatim quotation: do not fabricate, guess, or reconstruct the source's exact wording. Cite only a sourceUrl that actually appeared in the web_search results you received; never invent, guess, or alter a URL, and never fabricate a source, excerpt, citation, or supporting content.
 
 Evidence quality rules:
 - Each evidence summary MUST accurately reflect what the specific source you cite actually says and must directly address the claim. A page that merely mentions the topic is NOT supporting evidence.
@@ -72,6 +72,64 @@ function collectText(content: Anthropic.ContentBlock[]): string {
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("\n");
+}
+
+/**
+ * Collect the source URLs actually returned by the web_search server tool in a
+ * message's content. Each `web_search_tool_result` block carries a `content`
+ * array of `web_search_result` items (url/title/encrypted_content); on an error
+ * the block's `content` is a single error object instead, which we skip. We only
+ * read the (plaintext) URLs — the page text itself is encrypted and opaque to us.
+ */
+function collectRetrievedUrls(content: ReadonlyArray<{ type: string }>): string[] {
+  const urls: string[] = [];
+  for (const block of content) {
+    if (block.type !== "web_search_tool_result") continue;
+    const inner = (block as { content?: unknown }).content;
+    if (!Array.isArray(inner)) continue; // error object, not a results list
+    for (const item of inner) {
+      const url = (item as { url?: unknown } | null)?.url;
+      if (typeof url === "string" && url) urls.push(url);
+    }
+  }
+  return urls;
+}
+
+/**
+ * Normalize a URL for attribution matching: lowercase host, drop a leading
+ * "www.", drop trailing slashes, and ignore protocol/query/fragment. Returns
+ * null for anything that is not a parseable URL.
+ */
+function normalizeUrlForMatch(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return `${host}${path}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tag each evidence item with `sourceRetrieved` (attribution only): true iff its
+ * sourceUrl matched a URL web_search actually returned for this verification.
+ * Non-mutating; never changes a verdict. An unmatched URL is a provenance flag,
+ * NOT proof the claim is false or the summary inaccurate.
+ */
+function groundEvidence(claims: Claim[], retrievedUrls: Set<string>): Claim[] {
+  const retrievedKeys = new Set<string>();
+  for (const u of retrievedUrls) {
+    const key = normalizeUrlForMatch(u);
+    if (key) retrievedKeys.add(key);
+  }
+  return claims.map((claim) => ({
+    ...claim,
+    evidence: claim.evidence.map((e) => {
+      const key = e.sourceUrl ? normalizeUrlForMatch(e.sourceUrl) : null;
+      return { ...e, sourceRetrieved: key !== null && retrievedKeys.has(key) };
+    }),
+  }));
 }
 
 function validVerdict(v: unknown): Verdict {
@@ -131,6 +189,9 @@ async function runVerification(
   const messages: MessageParam[] = [{ role: "user", content: userMessage }];
 
   let finalText = "";
+  // URLs web_search actually returned across every (possibly paused) turn of
+  // this verification — the ground truth we check cited sources against.
+  const retrievedUrls = new Set<string>();
   onProgress({ type: "status", message: "Reading the memo and planning searches…" });
 
   for (let i = 0; i < MAX_CONTINUATIONS; i++) {
@@ -187,6 +248,7 @@ async function runVerification(
     }
 
     const message = await stream.finalMessage();
+    for (const url of collectRetrievedUrls(message.content)) retrievedUrls.add(url);
 
     // Server tool loop hit its cap this turn — append and resume.
     if (message.stop_reason === "pause_turn") {
@@ -203,11 +265,16 @@ async function runVerification(
   onProgress({ type: "status", message: "Evaluating evidence and finalizing verdicts…" });
   const result = parseResult(finalText);
 
+  // Attribution grounding: tag each cited source with whether its URL was among
+  // the ones web_search actually returned for this verification. Provenance only
+  // — it never changes a verdict and never implies the summary is accurate.
+  const grounded = groundEvidence(result.claims, retrievedUrls);
+
   // Best-effort source validation. This annotates evidence with URL format
   // validity + reachability and adds structural quality notes. It NEVER changes
   // a verdict — an unreachable link is not proof a claim is false.
   onProgress({ type: "status", message: "Validating source links…" });
-  const annotated = await annotateClaimUrls(result.claims, { signal });
+  const annotated = await annotateClaimUrls(grounded, { signal });
   return { claims: withQualityWarnings(annotated) };
 }
 

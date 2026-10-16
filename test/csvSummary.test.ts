@@ -24,6 +24,24 @@ describe("MOCKED — claimsToCsv", () => {
     expect(header).not.toContain("Evidence Excerpt");
   });
 
+  it("exports source-attribution provenance honestly (yes/no/blank)", () => {
+    const csv = claimsToCsv([
+      claim({
+        evidence: [
+          { excerpt: "s", sourceUrl: "https://a.com", sourceTitle: "A", publicationDate: "", sourceRetrieved: true },
+          { excerpt: "s", sourceUrl: "https://b.com", sourceTitle: "B", publicationDate: "", sourceRetrieved: false },
+          { excerpt: "s", sourceUrl: "https://c.com", sourceTitle: "C", publicationDate: "" }, // un-grounded
+        ],
+      }),
+    ]);
+    const rows = csv.split("\r\n");
+    expect(rows[0]).toContain("Source Retrieved");
+    expect(rows[1].split(",")).toContain("yes");
+    expect(rows[2].split(",")).toContain("no");
+    // Un-grounded evidence leaves the cell blank, never "yes".
+    expect(rows[3]).not.toContain("yes");
+  });
+
   it("writes one row per evidence item and preserves the source URL", () => {
     const csv = claimsToCsv([
       claim({

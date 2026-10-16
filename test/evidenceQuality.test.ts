@@ -76,6 +76,31 @@ describe("MOCKED — structural evidence-quality assessment", () => {
     expect(assessClaim(c).join(" ")).toMatch(/newer dated evidence/i);
   });
 
+  it("definite verdict whose only source was NOT retrieved → provenance warning", () => {
+    const c = claim({ verdict: "Supported", evidence: [ev({ sourceRetrieved: false })] });
+    expect(assessClaim(c).join(" ")).toMatch(/provenance could not be confirmed/i);
+  });
+
+  it("definite verdict whose source WAS retrieved → no provenance warning", () => {
+    const c = claim({ verdict: "Supported", evidence: [ev({ sourceRetrieved: true })] });
+    expect(assessClaim(c)).toEqual([]);
+  });
+
+  it("un-grounded (undefined sourceRetrieved) → no provenance warning", () => {
+    // Older claims and data predating the grounding check must not be warned about.
+    const c = claim({ verdict: "Supported", evidence: [ev()] });
+    expect(assessClaim(c)).toEqual([]);
+  });
+
+  it("a retrieved source alongside an unretrieved one → no provenance warning", () => {
+    // Warn only when EVERY usable source is unconfirmed; one grounded source is enough.
+    const c = claim({
+      verdict: "Contradicted",
+      evidence: [ev({ sourceUrl: "https://a.com", sourceRetrieved: true }), ev({ sourceUrl: "https://b.com", sourceRetrieved: false })],
+    });
+    expect(assessClaim(c)).toEqual([]);
+  });
+
   it("a present-but-irrelevant excerpt does NOT force Supported (model may choose Insufficient; preserved)", () => {
     // Relevance is a semantic judgement left to the model. The structural layer
     // must not upgrade such a claim: if the model returned Insufficient Evidence

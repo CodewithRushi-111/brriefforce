@@ -14,8 +14,20 @@ const HEADERS = [
   "Evidence Summary",
   "Source Title",
   "Source URL",
+  "Source Retrieved",
   "Publication Date",
 ];
+
+/**
+ * Attribution provenance as an export cell: "yes"/"no" when checked, "" when the
+ * claim predates the check. "yes" means the URL matched a web-search result for
+ * that verification — NOT that the page supports the claim or the summary is exact.
+ */
+function retrievedCell(sourceRetrieved: boolean | undefined): string {
+  if (sourceRetrieved === true) return "yes";
+  if (sourceRetrieved === false) return "no";
+  return "";
+}
 
 /**
  * Flatten claims to CSV. One row per evidence item so every source gets its
@@ -26,7 +38,7 @@ export function claimsToCsv(claims: Claim[]): string {
 
   for (const claim of claims) {
     if (claim.evidence.length === 0) {
-      rows.push([claim.claim, claim.verdict, claim.reasoning, "", "", "", ""]);
+      rows.push([claim.claim, claim.verdict, claim.reasoning, "", "", "", "", ""]);
       continue;
     }
     for (const ev of claim.evidence) {
@@ -37,6 +49,7 @@ export function claimsToCsv(claims: Claim[]): string {
         ev.excerpt,
         ev.sourceTitle,
         ev.sourceUrl,
+        retrievedCell(ev.sourceRetrieved),
         ev.publicationDate,
       ]);
     }

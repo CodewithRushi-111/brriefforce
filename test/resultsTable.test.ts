@@ -53,3 +53,28 @@ describe("MOCKED — ResultsTable evidence attribution", () => {
     expect(html).toContain("2024-05-01");
   });
 });
+
+const withProvenance = (sourceRetrieved: boolean | undefined): Claim => ({
+  ...claim,
+  evidence: [{ ...claim.evidence[0], sourceRetrieved }],
+});
+
+describe("MOCKED — ResultsTable source-attribution provenance", () => {
+  it("marks an unretrieved source as unverified (and never as 'verified')", () => {
+    const html = render([withProvenance(false)]);
+    expect(html).toContain("unverified source");
+    // Must not imply the URL or summary is verified just because it was shown.
+    expect(html.toLowerCase()).not.toContain(">verified<");
+    // The summary is still a summary, not a quotation.
+    expect(html).toContain("Evidence summary");
+    expect(html).not.toContain("“");
+  });
+
+  it("does NOT show the unverified marker when the source was retrieved", () => {
+    expect(render([withProvenance(true)])).not.toContain("unverified source");
+  });
+
+  it("does NOT show the marker for un-grounded (undefined) older claims", () => {
+    expect(render([withProvenance(undefined)])).not.toContain("unverified source");
+  });
+});

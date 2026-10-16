@@ -26,6 +26,23 @@ function LinkStatus({ evidence }: { evidence: Claim["evidence"][number] }) {
   }
 }
 
+/**
+ * Attribution provenance marker. Shown only when this evidence's source URL was
+ * NOT among the pages web_search returned for this check. It reflects URL-level
+ * provenance only — it does not say the summary is wrong or the verdict unsafe.
+ */
+function SourceProvenance({ evidence }: { evidence: Claim["evidence"][number] }) {
+  if (!evidence.sourceUrl || evidence.sourceRetrieved !== false) return null;
+  return (
+    <span
+      className="text-amber-600 dark:text-amber-400"
+      title="This source URL did not appear in the web-search results for this check, so its provenance could not be confirmed. This does not affect the verdict and does not prove the summary is inaccurate."
+    >
+      · unverified source
+    </span>
+  );
+}
+
 interface Props {
   claims: Claim[];
   /** Only show claims with this verdict, if set. Indices stay tied to the full list. */
@@ -140,6 +157,7 @@ export default function ResultsTable({
                               <span className="text-zinc-400">· {ev.publicationDate}</span>
                             )}
                             <LinkStatus evidence={ev} />
+                            <SourceProvenance evidence={ev} />
                           </div>
                         </li>
                       ))}
